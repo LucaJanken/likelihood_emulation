@@ -22,14 +22,14 @@ data_dir = "data"
 os.makedirs(data_dir, exist_ok=True)
 
 # Choose scaler type: 'standard' for StandardScaler, 'minmax' for MinMaxScaler
-scaler_type = "minmax"  # Change this to 'minmax' to switch to MinMaxScaler
+scaler_type = "standard"  # Change this to 'minmax' to switch to MinMaxScaler
 
 # Function to select the scaler dynamically
 def get_scaler(scaler_type):
     if scaler_type == "standard":
         return StandardScaler()
     elif scaler_type == "minmax":
-        return MinMaxScaler(feature_range=(-1, 1))
+        return MinMaxScaler(feature_range=(0, 1))
     else:
         raise ValueError("Invalid scaler_type. Choose 'standard' or 'minmax'.")
 
@@ -50,26 +50,41 @@ C_inv_yy = 1 / sigma**2
 C_inv_xy = 0.0
 
 # Define sample ranges
-x_min, x_max = -2, 2
-y_min, y_max = -2, 2
+x_min, x_max = -3, 3
+y_min, y_max = -3, 3
+circle_radius = 3
 
 # Generate Latin Hypercube samples in [0,1]
 num_samples = 2000
-lhs_samples = lhs(2, samples=num_samples)
+valid_samples = []
 
-# Scale LHS samples to the desired (x,y) range
-x_samples = lhs_samples[:, 0] * (x_max - x_min) + x_min
-y_samples = lhs_samples[:, 1] * (y_max - y_min) + y_min
+while len(valid_samples) < num_samples:
+    # Generate Latin Hypercube samples in [0,1] and scale to (x,y) range
+    lhs_samples = lhs(2, samples=num_samples)  # Generates more than needed
+    x_samples = lhs_samples[:, 0] * (x_max - x_min) + x_min
+    y_samples = lhs_samples[:, 1] * (y_max - y_min) + y_min
+    
+    # Compute distance from center
+    distances = np.sqrt(x_samples**2 + y_samples**2)
 
-# Compute "true" function values = chi^2(x,y)
+    # Keep only samples within the circle
+    inside_circle = distances <= circle_radius
+    valid_samples.extend(zip(x_samples[inside_circle], y_samples[inside_circle]))
+
+    # Reduce to the required number of samples
+    valid_samples = valid_samples[:num_samples]
+
+# Convert to numpy array
+params = np.array(valid_samples)
+
+# Compute "true" function values
 data = np.array([
     neg_log_gaussian_2D(x, y, bestfit_value, bestfit_point, C_inv_xx, C_inv_yy, C_inv_xy)
-    for (x, y) in zip(x_samples, y_samples)
+    for x, y in params
 ])
 
-# Reshape parameters and target values
-params = np.column_stack((x_samples, y_samples))  # (num_samples, 2)
-targets = data.reshape(-1, 1)  # (num_samples, 1)
+# Reshape for scaling
+targets = data.reshape(-1, 1)
 
 # Instantiate scalers
 param_scaler = get_scaler(scaler_type)
