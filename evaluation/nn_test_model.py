@@ -66,11 +66,11 @@ C_inv_xy = 0.0
 
 # Sampling ranges for evaluation
 sample_ranges = {
-    "In-Domain [-2,2]": (-2, 2),
-    "Out-Domain [-2.5,2.5]": (-2.5, 2.5),
-    "Out-Domain [-3,3]": (-3, 3),
-    "Out-Domain [-3.5,3.5]": (-3.5, 3.5),
+    "In-Domain [-3,3]": (-3, 3),
     "Out-Domain [-4,4]": (-4, 4),
+    "Out-Domain [-5,5]": (-5, 5),
+    "Out-Domain [-6,6]": (-6, 6),
+
 }
 
 num_samples = 1000  # Number of samples per region
@@ -80,10 +80,30 @@ num_samples_per_axis = 200  # Grid resolution for contour plots
 for label, (xmin, xmax) in sample_ranges.items():
     ymin, ymax = xmin, xmax  # Symmetric range for y
 
-    # Generate LHS samples for scatter plot
-    lhs_samples = lhs(2, samples=num_samples)
-    x_samples = lhs_samples[:, 0] * (xmax - xmin) + xmin
-    y_samples = lhs_samples[:, 1] * (ymax - ymin) + ymin
+    # Define circular constraint parameters
+    circle_radius = min(abs(xmin), abs(xmax))  # Largest inscribed circle
+    valid_samples = []
+
+    while len(valid_samples) < num_samples:
+        # Generate Latin Hypercube samples in [0,1] and scale to (x,y) range
+        lhs_samples = lhs(2, samples=num_samples)  # Generate extra to ensure enough valid points
+        x_samples = lhs_samples[:, 0] * (xmax - xmin) + xmin
+        y_samples = lhs_samples[:, 1] * (ymax - ymin) + ymin
+
+        # Compute radial distance from the center (0,0)
+        distances = np.sqrt(x_samples**2 + y_samples**2)
+
+        # Keep only samples inside the largest inscribed circle
+        inside_circle = distances <= circle_radius
+        valid_samples.extend(zip(x_samples[inside_circle], y_samples[inside_circle]))
+
+        # Limit to the required number of samples
+        valid_samples = valid_samples[:num_samples]
+
+    # Convert to numpy array
+    params = np.array(valid_samples)
+    x_samples, y_samples = params[:, 0], params[:, 1]
+
 
     # Compute true function values
     chi2_true = np.array([
@@ -99,23 +119,23 @@ for label, (xmin, xmax) in sample_ranges.items():
     chi2_pred_scaled = model.predict(params_scaled, verbose=0)
     chi2_pred = target_scaler.inverse_transform(chi2_pred_scaled).flatten()
 
-    # Compute residuals
-    residuals = chi2_pred - chi2_true
+    # Compute relative residuals
+    relative_residuals = (chi2_pred - chi2_true) / chi2_true
 
     # Scatter plot of residuals
     plt.figure(figsize=(6, 5))
-    plt.scatter(chi2_true, residuals, alpha=0.5, s=10)
+    plt.scatter(chi2_true, relative_residuals, s=5, alpha=0.5)
     plt.axhline(y=0, color="r", linestyle="--", linewidth=1)
     plt.xlabel(r"$\chi^2_{{true}}$")
-    plt.ylabel(r"$\chi^2_{{pred}} - \chi^2_{{true}}$")
-    plt.xlim(-5, 125)
-    plt.ylim(-20, 20)
+    plt.ylabel(r"$(\chi^2_{{pred}} - \chi^2_{{true}}) / \chi^2_{{true}}$")
+    plt.xlim(-5, 160)
+    #plt.ylim(-20, 20)
     plt.title(label)
     plt.grid(True)
     plt.tight_layout()
 
     # Save residual plot
-    plot_filename = os.path.join(plot_dir, f"[-1,1]_chi2_residuals_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    plot_filename = os.path.join(plot_dir, f"SS_chi2_residuals_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
     plt.savefig(plot_filename, dpi=300)
     plt.show()
     print(f"Residual plot saved: {plot_filename}")
@@ -137,7 +157,7 @@ for label, (xmin, xmax) in sample_ranges.items():
     chi2_pred_scaled_grid = model.predict(params_scaled_grid, verbose=0)
     chi2_pred_grid = target_scaler.inverse_transform(chi2_pred_scaled_grid).reshape(X.shape)
 
-    # Compute residuals for contour plot
+    # Compute relative residuals for contour plot
     residuals_grid = chi2_pred_grid - chi2_true_grid
 
     # Contour plot figure
@@ -166,7 +186,7 @@ for label, (xmin, xmax) in sample_ranges.items():
 
     # Adjust layout and save
     plt.tight_layout()
-    contour_filename = os.path.join(plot_dir, f"[-1,1]_chi2_contours_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    contour_filename = os.path.join(plot_dir, f"SS_chi2_contours_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
     plt.savefig(contour_filename, dpi=300)
     plt.show()
     print(f"Contour plot saved: {contour_filename}")
