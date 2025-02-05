@@ -1,227 +1,195 @@
-import sys
 import os
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
+from tensorflow.keras.models import load_model
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from pyDOE import lhs
 import pickle
-from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
 
-##############################################################################
-# 1) Adjust Python path and define/load the previously saved scalers
-##############################################################################
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if project_root not in sys.path:
-    sys.path.append(project_root)
+# Choose scaler type: 'standard' for StandardScaler, 'minmax' for MinMaxScaler
+scaler_type = "standard"  # Change this to 'minmax' to use MinMaxScaler
 
-# Load scalers (must match what you pickled in train.py)
-with open(os.path.join("data", "param_scaler.pkl"), "rb") as f:
-    param_scaler: MinMaxScaler = pickle.load(f)
+# Load trained model and scalers
+data_dir = "data"
+plot_dir = "plots"
+os.makedirs(plot_dir, exist_ok=True)  # Ensure the directory exists
 
-with open(os.path.join("data", "target_scaler.pkl"), "rb") as f:
-    target_scaler: MinMaxScaler = pickle.load(f)
+#model_path = os.path.join("models", "trained_model.h5")
+model_path = os.path.join("models", "hps_trained_model.h5")
+#param_scaler_path = os.path.join(data_dir, "param_scaler.pkl")
+#target_scaler_path = os.path.join(data_dir, "target_scaler.pkl")
+param_scaler_path = os.path.join(data_dir, "hps_param_scaler.pkl")
+target_scaler_path = os.path.join(data_dir, "hps_target_scaler.pkl")
 
-# We also need the same TF constants your Lambda layer used for scaling
-target_min = tf.constant(target_scaler.data_min_[0], dtype=tf.float32)
-target_max = tf.constant(target_scaler.data_max_[0], dtype=tf.float32)
+# Load scalers
+with open(param_scaler_path, "rb") as f:
+    param_scaler = pickle.load(f)
 
-##############################################################################
-# 2) Define the same custom functions used in train.py's Lambda layer
-##############################################################################
+with open(target_scaler_path, "rb") as f:
+    target_scaler = pickle.load(f)
+
+# Define inverse transformation for both scaler types
 def inverse_transform_tf(scaled_tensor, scaler):
-    """
-    Same function as in train.py. Applies the inverse of MinMaxScaler using TF ops.
-    """
-    min_val = tf.constant(scaler.data_min_, dtype=tf.float32)
-    max_val = tf.constant(scaler.data_max_, dtype=tf.float32)
-    return scaled_tensor * (max_val - min_val) + min_val
+    if isinstance(scaler, StandardScaler):
+        means = tf.constant(scaler.mean_, dtype=tf.float32)
+        stds = tf.constant(scaler.scale_, dtype=tf.float32)
+        return scaled_tensor * stds + means
+    elif isinstance(scaler, MinMaxScaler):
+        min_val = tf.constant(scaler.data_min_, dtype=tf.float32)
+        max_val = tf.constant(scaler.data_max_, dtype=tf.float32)
+        return scaled_tensor * (max_val - min_val) + min_val
 
-def compute_chi2(args):
-    """
-    Same logic as in train.py. 
-    1) Unscale x,y 
-    2) Parse [p0, x0, y0, cxx, cxy, cyy]
-    3) Compute unscaled chi^2
-    4) Re-scale chi^2 to [0,1] using (chi2 - target_min)/(target_max - target_min)
-    """
-    scaled_xy, pvec = args
-    
-    # (A) unscale (x,y)
-    xy_unscaled = inverse_transform_tf(scaled_xy, param_scaler)
-    x = xy_unscaled[:, 0:1]
-    y = xy_unscaled[:, 1:2]
-    
-    # (B) parse predicted parameters
-    p0  = pvec[:, 0:1]
-    x0  = pvec[:, 1:2]
-    y0  = pvec[:, 2:3]
-    cxx = pvec[:, 3:4]
-    cxy = pvec[:, 4:5]
-    cyy = pvec[:, 5:6]
+# Extract appropriate constants for rescaling
+if isinstance(target_scaler, StandardScaler):
+    target_mean = tf.constant(target_scaler.mean_[0], dtype=tf.float32)
+    target_std = tf.constant(target_scaler.scale_[0], dtype=tf.float32)
+elif isinstance(target_scaler, MinMaxScaler):
+    target_min = tf.constant(target_scaler.data_min_[0], dtype=tf.float32)
+    target_max = tf.constant(target_scaler.data_max_[0], dtype=tf.float32)
 
-    # (C) compute unscaled chi^2
-    dx = x - x0
-    dy = y - y0
-    mahalanobis = cxx*dx*dx + 2.0*cxy*dx*dy + cyy*dy*dy
-    chi2_unscaled = p0 + mahalanobis
+# Load model with custom objects
+model = load_model(model_path, custom_objects={"inverse_transform_tf": inverse_transform_tf})
 
-    # (D) scale chi^2 back into [0,1]
-    chi2_scaled = (chi2_unscaled - target_min) / (target_max - target_min)
-    return chi2_scaled
-
-##############################################################################
-# 3) Load the trained Keras model with custom_objects
-##############################################################################
-model_path = os.path.join("models", "trained_model.h5")
-model = tf.keras.models.load_model(
-    model_path,
-    # Provide the functions used by the Lambda layer:
-    custom_objects={
-        "inverse_transform_tf": inverse_transform_tf,
-        "compute_chi2": compute_chi2
-    },
-    compile=False
-)
-
-print("Model loaded successfully!")
-
-##############################################################################
-# 4) Define the neg-log Gaussian function for "true" reference
-##############################################################################
+# Define the true analytical function
 def neg_log_gaussian_2D(x, y, bestfit_value, bestfit_point, C_inv_xx, C_inv_yy, C_inv_xy):
-    """
-    Computes the neg-log Gaussian likelihood function at (x, y), i.e. chi^2(x,y).
-    """
     x_0, y_0 = bestfit_point
     dx = x - x_0
     dy = y - y_0
     mahalanobis_dist = C_inv_xx * dx**2 + 2 * C_inv_xy * dx * dy + C_inv_yy * dy**2
     return bestfit_value + 0.5 * mahalanobis_dist
 
-##############################################################################
-# 5) Define test regions in which we'll evaluate the model
-##############################################################################
-grid_size = 100
-test_regions = {
-    "In-Domain":         (-2,   2),
-    "Extrapolation_(2.5)":(-2.5, 2.5),
-    "Extrapolation_(3)":  (-3,   3),
-    "Extrapolation_(3.5)":(-3.5, 3.5),
-    "Extrapolation_(4)":  (-4,   4)
-}
-
-# "True" Gaussian parameters (matching those in train.py)
+# Function parameters (same as in training)
 bestfit_value = 0.0
 bestfit_point = np.array([0.0, 0.0])
 sigma = np.sqrt(0.1)
-C_inv_xx = 1.0 / sigma**2
-C_inv_yy = 1.0 / sigma**2
+C_inv_xx = 1 / sigma**2
+C_inv_yy = 1 / sigma**2
 C_inv_xy = 0.0
 
-# Make a "plots" folder if not present
-os.makedirs("plots", exist_ok=True)
+# Sampling ranges for evaluation
+sample_ranges = {
+    "In-Domain [-3,3]": (-3, 3),
+    "Out-Domain [-4,4]": (-4, 4),
+    "Out-Domain [-5,5]": (-5, 5),
+    "Out-Domain [-6,6]": (-6, 6),
 
-##############################################################################
-# 6) Evaluate the model over each test region
-##############################################################################
-for region_name, (min_val, max_val) in test_regions.items():
-    print(f"\nEvaluating in {region_name} region...")
+}
 
-    # Create a grid of (x, y) points
-    x_vals = np.linspace(min_val, max_val, grid_size)
-    y_vals = np.linspace(min_val, max_val, grid_size)
-    X, Y = np.meshgrid(x_vals, y_vals)
+num_samples = 1000  # Number of samples per region
+num_samples_per_axis = 200  # Grid resolution for contour plots
 
-    # Flatten the grid for batch prediction
-    grid_points = np.column_stack((X.ravel(), Y.ravel()))  # shape (grid_size^2, 2)
+# Loop through each region and generate plots
+for label, (xmin, xmax) in sample_ranges.items():
+    ymin, ymax = xmin, xmax  # Symmetric range for y
 
-    # Scale the grid points (x,y) as the model expects
-    grid_points_scaled = param_scaler.transform(grid_points)
+    # Define circular constraint parameters
+    circle_radius = min(abs(xmin), abs(xmax))  # Largest inscribed circle
+    valid_samples = []
 
-    # Model outputs *scaled chi^2*
-    predicted_outputs_scaled = model.predict(grid_points_scaled, verbose=0)
+    while len(valid_samples) < num_samples:
+        # Generate Latin Hypercube samples in [0,1] and scale to (x,y) range
+        lhs_samples = lhs(2, samples=num_samples)  # Generate extra to ensure enough valid points
+        x_samples = lhs_samples[:, 0] * (xmax - xmin) + xmin
+        y_samples = lhs_samples[:, 1] * (ymax - ymin) + ymin
 
-    # Inverse-transform predictions to get original chi^2 scale
-    predicted_outputs_original = target_scaler.inverse_transform(predicted_outputs_scaled)
-    # We'll take the first (and only) column as the predicted chi^2
-    predicted_chi2 = predicted_outputs_original[:, 0]
+        # Compute radial distance from the center (0,0)
+        distances = np.sqrt(x_samples**2 + y_samples**2)
 
-    # Compute the "true" chi^2 from the neg-log Gaussian
-    true_chi2 = neg_log_gaussian_2D(
-        grid_points[:, 0],   # x
-        grid_points[:, 1],   # y
-        bestfit_value,
-        bestfit_point,
-        C_inv_xx,
-        C_inv_yy,
-        C_inv_xy
-    )
+        # Keep only samples inside the largest inscribed circle
+        inside_circle = distances <= circle_radius
+        valid_samples.extend(zip(x_samples[inside_circle], y_samples[inside_circle]))
 
-    # Reshape for 2D contour plotting
-    Z_true = true_chi2.reshape(grid_size, grid_size)
-    Z_pred = predicted_chi2.reshape(grid_size, grid_size)
-    Z_diff = Z_pred - Z_true
+        # Limit to the required number of samples
+        valid_samples = valid_samples[:num_samples]
 
-    # -------------------------------------------------------------------------
-    # 6a) 2D Contour plots of True chi^2, Predicted chi^2, and Difference
-    # -------------------------------------------------------------------------
-    plt.figure(figsize=(18, 6))
+    # Convert to numpy array
+    params = np.array(valid_samples)
+    x_samples, y_samples = params[:, 0], params[:, 1]
 
-    # Subplot 1: True chi^2
-    plt.subplot(1, 3, 1)
-    plt.contourf(X, Y, Z_true, levels=100, cmap="viridis")
-    plt.colorbar(label=r"$\chi^2_{\mathrm{true}}$")
-    plt.title(f"True $\chi^2$ Function ({region_name})")
-    plt.xlabel("X")
-    plt.ylabel("Y")
 
-    # Subplot 2: Predicted chi^2
-    plt.subplot(1, 3, 2)
-    plt.contourf(X, Y, Z_pred, levels=100, cmap="viridis")
-    plt.colorbar(label=r"$\chi^2_{\mathrm{pred}}$")
-    plt.title(f"Neural Network Emulation ({region_name})")
-    plt.xlabel("X")
-    plt.ylabel("Y")
+    # Compute true function values
+    chi2_true = np.array([
+        neg_log_gaussian_2D(x, y, bestfit_value, bestfit_point, C_inv_xx, C_inv_yy, C_inv_xy)
+        for (x, y) in zip(x_samples, y_samples)
+    ])
 
-    # Subplot 3: Difference = Pred - True
-    plt.subplot(1, 3, 3)
-    # Adjust levels depending on your typical error range
-    plt.contourf(X, Y, Z_diff, levels=np.linspace(-0.5, 0.5, 31), cmap="coolwarm")
-    plt.colorbar(label=r"$\chi^2_{\mathrm{pred}} - \chi^2_{\mathrm{true}}$")
-    plt.title(f"Difference in $\chi^2$ ({region_name})")
-    plt.xlabel("X")
-    plt.ylabel("Y")
+    # Prepare inputs for model
+    params = np.column_stack((x_samples, y_samples))
+    params_scaled = param_scaler.transform(params)
 
+    # Predict using model
+    chi2_pred_scaled = model.predict(params_scaled, verbose=0)
+    chi2_pred = target_scaler.inverse_transform(chi2_pred_scaled).flatten()
+
+    # Compute relative residuals
+    relative_residuals = (chi2_pred - chi2_true) / chi2_true
+
+    # Scatter plot of residuals
+    plt.figure(figsize=(6, 5))
+    plt.scatter(chi2_true, relative_residuals, s=5, alpha=0.5)
+    plt.axhline(y=0, color="r", linestyle="--", linewidth=1)
+    plt.xlabel(r"$\chi^2_{{true}}$")
+    plt.ylabel(r"$(\chi^2_{{pred}} - \chi^2_{{true}}) / \chi^2_{{true}}$")
+    plt.xlim(-5, 160)
+    #plt.ylim(-20, 20)
+    plt.title(label)
+    plt.grid(True)
     plt.tight_layout()
-    plt.savefig(os.path.join("plots", f"function_comparison_{region_name}.png"))
+
+    # Save residual plot
+    plot_filename = os.path.join(plot_dir, f"hps_chi2_residuals_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    plt.savefig(plot_filename, dpi=300)
     plt.show()
+    print(f"Residual plot saved: {plot_filename}")
 
-    # -------------------------------------------------------------------------
-    # 6b) Plot mean error vs. True chi^2
-    # -------------------------------------------------------------------------
-    bins = np.linspace(0, np.max(true_chi2), 100)
-    chi2_differences = []
-    true_chi2_flat = true_chi2.ravel()
-    diff_flat = Z_diff.ravel()
+    # --- Contour Plots ---
+    x_linspace = np.linspace(xmin, xmax, num_samples_per_axis)
+    y_linspace = np.linspace(ymin, ymax, num_samples_per_axis)
+    X, Y = np.meshgrid(x_linspace, y_linspace)
+    grid_points = np.column_stack((X.ravel(), Y.ravel()))
 
-    for b in bins:
-        mask = (true_chi2_flat <= b)
-        if np.any(mask):
-            chi2_differences.append(np.mean(diff_flat[mask]))
-        else:
-            chi2_differences.append(np.nan)
+    # Compute true function values for contour plot
+    chi2_true_grid = np.array([
+        neg_log_gaussian_2D(x, y, bestfit_value, bestfit_point, C_inv_xx, C_inv_yy, C_inv_xy)
+        for (x, y) in grid_points
+    ]).reshape(X.shape)
 
-    plt.figure(figsize=(8, 6))
-    plt.plot(bins, chi2_differences, marker="o",
-             label=r"$\langle \chi^2_{\mathrm{pred}} - \chi^2_{\mathrm{true}} \rangle$")
-    plt.xlabel(r"$\chi^2_{\mathrm{true}}$")
-    plt.ylabel(r"$\chi^2_{\mathrm{pred}} - \chi^2_{\mathrm{true}}$")
-    plt.ylim(-2, 2)   # Adjust if your range differs
-    plt.xlim(0, 100)    # Adjust if your max chi^2 is bigger/smaller
-    plt.axhline(0, color='r', linestyle="--", label="Zero Error Line")
-    plt.title(f"Chi² Difference vs. True Chi² ({region_name})")
-    plt.legend()
-    plt.grid()
-    plt.savefig(os.path.join("plots", f"chi2_difference_vs_true_{region_name}.png"))
+    # Predict using model for contour plot
+    params_scaled_grid = param_scaler.transform(grid_points)
+    chi2_pred_scaled_grid = model.predict(params_scaled_grid, verbose=0)
+    chi2_pred_grid = target_scaler.inverse_transform(chi2_pred_scaled_grid).reshape(X.shape)
+
+    # Compute relative residuals for contour plot
+    residuals_grid = chi2_pred_grid - chi2_true_grid
+
+    # Contour plot figure
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # True function contour
+    c1 = axes[0].contourf(X, Y, chi2_true_grid, levels=50, cmap="viridis")
+    fig.colorbar(c1, ax=axes[0])
+    axes[0].set_title(f"True $\chi^2$ ({label})")
+    axes[0].set_xlabel("x")
+    axes[0].set_ylabel("y")
+
+    # Predicted function contour
+    c2 = axes[1].contourf(X, Y, chi2_pred_grid, levels=50, cmap="viridis")
+    fig.colorbar(c2, ax=axes[1])
+    axes[1].set_title(f"Predicted $\chi^2$ ({label})")
+    axes[1].set_xlabel("x")
+    axes[1].set_ylabel("y")
+
+    # Residuals contour
+    c3 = axes[2].contourf(X, Y, residuals_grid, levels=50, cmap="coolwarm")
+    fig.colorbar(c3, ax=axes[2])
+    axes[2].set_title(f"Residuals: $\chi^2_{{pred}} - \chi^2_{{true}}$ ({label})")
+    axes[2].set_xlabel("x")
+    axes[2].set_ylabel("y")
+
+    # Adjust layout and save
+    plt.tight_layout()
+    contour_filename = os.path.join(plot_dir, f"hps_chi2_contours_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    plt.savefig(contour_filename, dpi=300)
     plt.show()
-
-print("\nEvaluation complete! All plots saved in the 'plots' directory.")
+    print(f"Contour plot saved: {contour_filename}")
