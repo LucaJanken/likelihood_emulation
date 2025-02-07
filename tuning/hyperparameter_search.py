@@ -147,17 +147,17 @@ def build_model(hp):
 tuner = kt.Hyperband(
     build_model,
     objective="val_loss",
-    max_epochs=50,
-    factor=3,
+    max_epochs=200,
+    factor=2,
     directory="hyperband_results",
     project_name="hyperparameter_search"
 )
 
-early_stopping = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
+early_stopping = EarlyStopping(monitor="val_loss", patience=20, restore_best_weights=True)
 
 tuner.search(
     params_scaled, targets_scaled,
-    epochs=50,
+    epochs=200,
     batch_size=64,
     validation_split=0.1,
     callbacks=[early_stopping]

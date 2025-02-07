@@ -23,6 +23,6 @@ source activate ConnectEnvironment
 cd $SLURM_SUBMIT_DIR
 
 # Run the Python script
-python tuning/hyperparameter_search.py
+python tuning/dg_hyperparameter_search.py
 
 echo "========= Job finished at $(date) =========="
