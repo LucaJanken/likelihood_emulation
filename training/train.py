@@ -124,11 +124,11 @@ elif isinstance(target_scaler, MinMaxScaler):
 inputs_scaled = layers.Input(shape=(2,), name="scaled_xy")  # [x_scaled, y_scaled]
 
 # Hidden layers to predict 6 Gaussian parameters [p0, x0, y0, cxx, cxy, cyy]
-hidden = layers.Dense(128, activation="relu")(inputs_scaled)
+hidden = layers.Dense(256, activation="sigmoid")(inputs_scaled)
 #hidden = layers.Dropout(0.2)(hidden)
-hidden = layers.Dense(128, activation="relu")(hidden)
+hidden = layers.Dense(512, activation="sigmoid")(hidden)
 #hidden = layers.Dropout(0.2)(hidden)
-hidden = layers.Dense(128, activation="relu")(hidden)
+hidden = layers.Dense(288, activation="sigmoid")(hidden)
 #hidden = layers.Dropout(0.2)(hidden)
 pred_params = layers.Dense(6, name="gaussian_params")(hidden)
 
@@ -180,14 +180,14 @@ model.summary()
 
 # Compile the model
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=0.00005),
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
     loss="mse"
 )
 
 # Define early stopping
 early_stopping = EarlyStopping(
     monitor="loss",
-    patience=20,
+    patience=100,
     restore_best_weights=True
 )
 
@@ -195,8 +195,8 @@ early_stopping = EarlyStopping(
 history = model.fit(
     params_scaled,
     targets_scaled,
-    epochs=500,
-    batch_size=64,
+    epochs=1000,
+    batch_size=32,
     validation_split=0.1,
     verbose=2,
     callbacks=[early_stopping]

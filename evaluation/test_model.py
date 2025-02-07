@@ -15,12 +15,10 @@ data_dir = "data"
 plot_dir = "plots"
 os.makedirs(plot_dir, exist_ok=True)  # Ensure the directory exists
 
-#model_path = os.path.join("models", "trained_model.h5")
-model_path = os.path.join("models", "hps_trained_model.h5")
-#param_scaler_path = os.path.join(data_dir, "param_scaler.pkl")
-#target_scaler_path = os.path.join(data_dir, "target_scaler.pkl")
-param_scaler_path = os.path.join(data_dir, "hps_param_scaler.pkl")
-target_scaler_path = os.path.join(data_dir, "hps_target_scaler.pkl")
+model_path = os.path.join("models", "trained_model.h5")
+param_scaler_path = os.path.join(data_dir, "param_scaler.pkl")
+target_scaler_path = os.path.join(data_dir, "target_scaler.pkl")
+
 
 # Load scalers
 with open(param_scaler_path, "rb") as f:
@@ -138,7 +136,7 @@ for label, (xmin, xmax) in sample_ranges.items():
     plt.tight_layout()
 
     # Save residual plot
-    plot_filename = os.path.join(plot_dir, f"hps_chi2_residuals_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    plot_filename = os.path.join(plot_dir, f"SS_chi2_residuals_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
     plt.savefig(plot_filename, dpi=300)
     plt.show()
     print(f"Residual plot saved: {plot_filename}")
@@ -189,7 +187,7 @@ for label, (xmin, xmax) in sample_ranges.items():
 
     # Adjust layout and save
     plt.tight_layout()
-    contour_filename = os.path.join(plot_dir, f"hps_chi2_contours_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    contour_filename = os.path.join(plot_dir, f"SS_chi2_contours_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
     plt.savefig(contour_filename, dpi=300)
     plt.show()
     print(f"Contour plot saved: {contour_filename}")

@@ -13,11 +13,15 @@ plot_dir = "plots"
 os.makedirs(plot_dir, exist_ok=True)  # Ensure the directory exists
 
 #model_path = os.path.join("models", "trained_model.h5")
-model_path = os.path.join("models", "hps_trained_model.h5")
+#model_path = os.path.join("models", "hps_trained_model.h5")
+model_path = os.path.join("models", "dg_hps_trained_model.h5")
 #param_scaler_path = os.path.join(data_dir, "param_scaler.pkl")
 #target_scaler_path = os.path.join(data_dir, "target_scaler.pkl")
-param_scaler_path = os.path.join(data_dir, "hps_param_scaler.pkl")
-target_scaler_path = os.path.join(data_dir, "hps_target_scaler.pkl")
+#param_scaler_path = os.path.join(data_dir, "hps_param_scaler.pkl")
+#target_scaler_path = os.path.join(data_dir, "hps_target_scaler.pkl")
+param_scaler_path = os.path.join(data_dir, "dg_hps_param_scaler.pkl")
+target_scaler_path = os.path.join(data_dir, "dg_hps_target_scaler.pkl")
+
 
 # Load scalers
 with open(param_scaler_path, "rb") as f:
@@ -46,7 +50,7 @@ elif isinstance(target_scaler, MinMaxScaler):
     target_max = tf.constant(target_scaler.data_max_[0], dtype=tf.float32)
 
 # Load the best-trained model
-model = load_model("models/hps_trained_model.h5")
+model = load_model("models/dg_hps_trained_model.h5")
 
 # Print the architecture
 #model.summary()
