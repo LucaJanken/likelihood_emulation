@@ -30,11 +30,20 @@ def chi_squared_double_gaussian(x, y, bestfit_point1, bestfit_point2, sigma):
     x1, y1 = bestfit_point1
     x2, y2 = bestfit_point2
     
+    # Compute the Gaussian terms
     term1 = np.exp(-0.5 * ((x - x1) ** 2 + (y - y1) ** 2) / sigma**2)
     term2 = np.exp(-0.5 * ((x - x2) ** 2 + (y - y2) ** 2) / sigma**2)
-    likelihood = (1 / (2 * np.pi * sigma**2)) * (term1 + term2)
     
+    # Properly normalize the likelihood
+    normalization_factor = 1 / (4 * np.pi * sigma**2)  # Factor of 2 for the sum of two Gaussians
+    likelihood = normalization_factor * (term1 + term2)
+    
+    # Avoid taking log of zero
+    likelihood = np.maximum(likelihood, 1e-300)  # Prevent log(0) issues
+    
+    # Compute chi^2
     chi2 = -2 * np.log(likelihood)
+    
     return chi2
 
 # Choose function parameters
@@ -43,9 +52,9 @@ bestfit_point2 = np.array([1.0, 1.0])  # Second Gaussian center
 sigma = np.sqrt(0.1)  # Same variance for both Gaussians
 
 # Define sample ranges
-x_min, x_max = -3, 3
-y_min, y_max = -3, 3
-circle_radius = 3
+x_min, x_max = -5, 5
+y_min, y_max = -5, 5
+circle_radius = 5
 
 # Generate Latin Hypercube samples
 num_samples = 2000
@@ -80,16 +89,18 @@ params_scaled = param_scaler.fit_transform(params)
 targets_scaled = target_scaler.fit_transform(targets)
 
 # Save scalers
-with open(os.path.join(data_dir, "dg_param_scaler.pkl"), "wb") as f:
+with open(os.path.join(data_dir, "cl_dg_param_scaler.pkl"), "wb") as f:
     pickle.dump(param_scaler, f)
-with open(os.path.join(data_dir, "dg_target_scaler.pkl"), "wb") as f:
+with open(os.path.join(data_dir, "cl_dg_target_scaler.pkl"), "wb") as f:
     pickle.dump(target_scaler, f)
 
 # Define model
 inputs_scaled = layers.Input(shape=(2,), name="scaled_xy")
-hidden = layers.Dense(256, activation="sigmoid")(inputs_scaled)
-hidden = layers.Dense(512, activation="sigmoid")(hidden)
-hidden = layers.Dense(288, activation="sigmoid")(hidden)
+hidden = layers.Dense(416, activation="tanh")(inputs_scaled)
+hidden = layers.Dense(448, activation="sigmoid")(hidden)
+hidden = layers.Dense(416, activation="sigmoid")(hidden)
+hidden = layers.Dense(256, activation="sigmoid")(hidden)
+hidden = layers.Dense(448, activation="relu")(hidden)
 pred_params = layers.Dense(6, name="gaussian_params")(hidden)
 
 def compute_scaled_values(args):
@@ -119,7 +130,21 @@ def compute_scaled_values(args):
 
 scaled_values = layers.Lambda(compute_scaled_values, name="predicted_values")([inputs_scaled, pred_params])
 model = models.Model(inputs=inputs_scaled, outputs=scaled_values)
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005), loss="mse")
+#model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0002), loss="mse")
+
+# Define the custom loss function
+def chi2_underestimate_penalizing_loss(lambda_weight=5.0):
+    def loss(y_true, y_pred):
+        mse = tf.square(y_true - y_pred)
+        penalty = lambda_weight * tf.square(tf.maximum(y_true - y_pred, 0))  # Extra penalty for underestimates
+        return tf.reduce_mean(mse + penalty)
+    return loss
+
+# Compile model with custom loss
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0002), 
+    loss=chi2_underestimate_penalizing_loss(lambda_weight=100.0)
+)
 
 # Model summary
 model.summary()
@@ -129,7 +154,7 @@ early_stopping = EarlyStopping(monitor="loss", patience=100, restore_best_weight
 history = model.fit(
     params_scaled, 
     targets_scaled, 
-    epochs=1000, 
+    epochs=1500, 
     batch_size=32, 
     validation_split=0.1, 
     verbose=2, 
@@ -138,10 +163,10 @@ history = model.fit(
 
 # Save model
 os.makedirs("models", exist_ok=True)
-model.save(os.path.join("models", "dg_trained_model.h5"))
+model.save(os.path.join("models", "cl_dg_trained_model.h5"))
 
 # Save training history
-with open(os.path.join(data_dir, "dg_training_history.pkl"), "wb") as f:
+with open(os.path.join(data_dir, "cl_dg_training_history.pkl"), "wb") as f:
     pickle.dump(history.history, f)
 
 # Plot training history
@@ -157,5 +182,5 @@ plt.grid(True)
 
 # Save plot
 os.makedirs("plots", exist_ok=True)
-plt.savefig(os.path.join("plots", "dg_training_loss.png"))
+plt.savefig(os.path.join("plots", "cl_dg_training_loss.png"))
 plt.show()

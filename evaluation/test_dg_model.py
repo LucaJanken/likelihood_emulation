@@ -15,9 +15,9 @@ data_dir = "data"
 plot_dir = "plots"
 os.makedirs(plot_dir, exist_ok=True)
 
-model_path = os.path.join("models", "dg_hps_trained_model.h5")
-param_scaler_path = os.path.join(data_dir, "dg_hps_param_scaler.pkl")
-target_scaler_path = os.path.join(data_dir, "dg_hps_target_scaler.pkl")
+model_path = os.path.join("models", "cl_dg_trained_model.h5")
+param_scaler_path = os.path.join(data_dir, "cl_dg_param_scaler.pkl")
+target_scaler_path = os.path.join(data_dir, "cl_dg_target_scaler.pkl")
 
 # Load scalers
 with open(param_scaler_path, "rb") as f:
@@ -82,24 +82,48 @@ def compute_scaled_values(args):
         return (unscaled_values - target_min) / (target_max - target_min)
 
 # Load model with custom objects
+#model = load_model(
+#    model_path,
+#    custom_objects={
+#        "inverse_transform_tf": inverse_transform_tf,
+#        "compute_scaled_values": compute_scaled_values
+#    }
+#)
+
+def chi2_underestimate_penalizing_loss(lambda_weight=100.0):
+    def loss(y_true, y_pred):
+        mse = tf.square(y_true - y_pred)
+        penalty = lambda_weight * tf.square(tf.maximum(y_true - y_pred, 0))
+        return tf.reduce_mean(mse + penalty)
+    return loss
+
 model = load_model(
     model_path,
-    custom_objects={
-        "inverse_transform_tf": inverse_transform_tf,
-        "compute_scaled_values": compute_scaled_values
-    }
+    custom_objects={"inverse_transform_tf": inverse_transform_tf,
+                    "compute_scaled_values": compute_scaled_values,
+                    "loss": chi2_underestimate_penalizing_loss(lambda_weight=100.0)
+                    }
 )
 
-# Define chi^2 function for double Gaussian
+# Define chi^2 function for double Gaussian likelihood
 def chi_squared_double_gaussian(x, y, bestfit_point1, bestfit_point2, sigma):
     x1, y1 = bestfit_point1
     x2, y2 = bestfit_point2
     
+    # Compute the Gaussian terms
     term1 = np.exp(-0.5 * ((x - x1) ** 2 + (y - y1) ** 2) / sigma**2)
     term2 = np.exp(-0.5 * ((x - x2) ** 2 + (y - y2) ** 2) / sigma**2)
-    likelihood = (1 / (2 * np.pi * sigma**2)) * (term1 + term2)
     
+    # Properly normalize the likelihood
+    normalization_factor = 1 / (4 * np.pi * sigma**2)  # Factor of 2 for the sum of two Gaussians
+    likelihood = normalization_factor * (term1 + term2)
+    
+    # Avoid taking log of zero
+    likelihood = np.maximum(likelihood, 1e-300)  # Prevent log(0) issues
+    
+    # Compute chi^2
     chi2 = -2 * np.log(likelihood)
+    
     return chi2
 
 # Function parameters
@@ -109,10 +133,10 @@ sigma = np.sqrt(0.1)
 
 # Sampling ranges
 sample_ranges = {
-    "In-Domain [-3,3]": (-3, 3),
-    "Out-Domain [-4,4]": (-4, 4),
-    "Out-Domain [-5,5]": (-5, 5),
+    "In-Domain [-5,5]": (-5, 5),
     "Out-Domain [-6,6]": (-6, 6),
+    "Out-Domain [-7,7]": (-7, 7),
+    "Out-Domain [-8,8]": (-8, 8)
 }
 
 num_samples = 1000
@@ -158,14 +182,14 @@ for label, (xmin, xmax) in sample_ranges.items():
     plt.axhline(y=0, color="r", linestyle="--", linewidth=1)
     plt.xlabel(r"$\chi^2_{{true}}$")
     plt.ylabel(r"$(\chi^2_{{pred}} - \chi^2_{{true}}) / \chi^2_{{true}}$")
-    plt.xlim(-5, 480)
-    plt.ylim(-1, 1)
+    plt.xlim(-5, 700)
+    plt.ylim(-0.25, 0.25)
     plt.title(label)
     plt.grid(True)
     plt.tight_layout()
 
     # Save residual plot
-    plot_filename = os.path.join(plot_dir, f"DG_hps_chi2_residuals_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    plot_filename = os.path.join(plot_dir, f"cl_DG_chi2_residuals_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
     plt.savefig(plot_filename, dpi=300)
     plt.show()
     print(f"Residual plot saved: {plot_filename}")
@@ -216,7 +240,7 @@ for label, (xmin, xmax) in sample_ranges.items():
 
     # Adjust layout and save
     plt.tight_layout()
-    contour_filename = os.path.join(plot_dir, f"DG_hps_chi2_contours_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
+    contour_filename = os.path.join(plot_dir, f"cl_DG_chi2_contours_{label.replace(' ', '_').replace('[', '').replace(']', '')}.png")
     plt.savefig(contour_filename, dpi=300)
     plt.show()
     print(f"Contour plot saved: {contour_filename}")

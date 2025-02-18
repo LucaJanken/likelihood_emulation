@@ -8,9 +8,9 @@ import pickle
 import matplotlib.pyplot as plt
 
 # --- Configurable Variables ---
-model_path = os.path.join("models", "dg_hps_trained_model.h5")
-param_scaler_path = os.path.join("data", "dg_hps_param_scaler.pkl")
-target_scaler_path = os.path.join("data", "dg_hps_target_scaler.pkl")
+model_path = os.path.join("models", "cl_dg_trained_model.h5")
+param_scaler_path = os.path.join("data", "cl_dg_param_scaler.pkl")
+target_scaler_path = os.path.join("data", "cl_dg_target_scaler.pkl")
 
 # Create a directory to store plots
 plot_dir = "plots_params"
@@ -51,12 +51,26 @@ def inverse_transform_tf(scaled_tensor, scaler):
         return scaled_tensor * (max_val - min_val) + min_val
 
 # 4) Finally, load the model with the custom objects
+#model = load_model(
+#    model_path,
+#    custom_objects={
+#        "inverse_transform_tf": inverse_transform_tf,
+#        # If you have other custom objects, list them as well
+#    },
+#)
+    
+def chi2_underestimate_penalizing_loss(lambda_weight=100.0):
+    def loss(y_true, y_pred):
+        mse = tf.square(y_true - y_pred)
+        penalty = lambda_weight * tf.square(tf.maximum(y_true - y_pred, 0))
+        return tf.reduce_mean(mse + penalty)
+    return loss
+
 model = load_model(
     model_path,
-    custom_objects={
-        "inverse_transform_tf": inverse_transform_tf,
-        # If you have other custom objects, list them as well
-    },
+    custom_objects={"inverse_transform_tf": inverse_transform_tf,
+                    "loss": chi2_underestimate_penalizing_loss(lambda_weight=5.0)
+                    }
 )
 
 # 5) Create an intermediate model that outputs the Gaussian parameters 
@@ -111,6 +125,6 @@ for i, (ax, name) in enumerate(zip(axes, param_names)):
     ax.set_ylabel("y")
 
 plt.tight_layout()
-out_file = os.path.join(plot_dir, "dg_hps_params_contours.png")
+out_file = os.path.join(plot_dir, "cl_dg_params_contours.png")
 plt.savefig(out_file, dpi=300)
 plt.show()

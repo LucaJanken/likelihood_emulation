@@ -37,11 +37,20 @@ def chi_squared_double_gaussian(x, y, bestfit_point1, bestfit_point2, sigma):
     x1, y1 = bestfit_point1
     x2, y2 = bestfit_point2
     
+    # Compute the Gaussian terms
     term1 = np.exp(-0.5 * ((x - x1) ** 2 + (y - y1) ** 2) / sigma**2)
     term2 = np.exp(-0.5 * ((x - x2) ** 2 + (y - y2) ** 2) / sigma**2)
-    likelihood = (1 / (2 * np.pi * sigma**2)) * (term1 + term2)
     
+    # Properly normalize the likelihood
+    normalization_factor = 1 / (4 * np.pi * sigma**2)  # Factor of 2 for the sum of two Gaussians
+    likelihood = normalization_factor * (term1 + term2)
+    
+    # Avoid taking log of zero
+    likelihood = np.maximum(likelihood, 1e-300)  # Prevent log(0) issues
+    
+    # Compute chi^2
     chi2 = -2 * np.log(likelihood)
+    
     return chi2
 
 # Choose function parameters
@@ -50,9 +59,9 @@ bestfit_point2 = np.array([1.0, 1.0])  # Second Gaussian center
 sigma = np.sqrt(0.1)  # Same variance for both Gaussians
 
 # Generate samples
-x_min, x_max = -3, 3
-y_min, y_max = -3, 3
-circle_radius = 3
+x_min, x_max = -5, 5
+y_min, y_max = -5, 5
+circle_radius = 5
 num_samples = 2000
 valid_samples = []
 
@@ -75,10 +84,10 @@ target_scaler = get_scaler(scaler_type)
 params_scaled = param_scaler.fit_transform(params)
 targets_scaled = target_scaler.fit_transform(targets)
 
-with open(os.path.join(data_dir, "dg_hps_param_scaler.pkl"), "wb") as f:
+with open(os.path.join(data_dir, "2dg_hps_param_scaler.pkl"), "wb") as f:
     pickle.dump(param_scaler, f)
 
-with open(os.path.join(data_dir, "dg_hps_target_scaler.pkl"), "wb") as f:
+with open(os.path.join(data_dir, "2dg_hps_target_scaler.pkl"), "wb") as f:
     pickle.dump(target_scaler, f)
 
 # Define inverse scaling function
@@ -120,15 +129,17 @@ def compute_scaled_values(args):
 def build_model(hp):
     inputs_scaled = layers.Input(shape=(2,), name="scaled_xy")
     num_layers = hp.Int("num_layers", min_value=2, max_value=5)
+    activation_options = ["relu", "tanh", "sigmoid"]
+
     hidden = layers.Dense(
         hp.Int("units_1", min_value=32, max_value=512, step=32),
-        activation=hp.Choice("activation_1", values=["relu", "tanh", "sigmoid"])
+        activation=hp.Choice("activation_1", values=activation_options)
     )(inputs_scaled)
 
     for i in range(2, num_layers + 1):
         hidden = layers.Dense(
             hp.Int(f"units_{i}", min_value=32, max_value=512, step=32),
-            activation=hp.Choice(f"activation_{i}", values=["relu", "tanh", "sigmoid"])
+            activation=hp.Choice(f"activation_{i}", values=activation_options)
         )(hidden)
 
     pred_params = layers.Dense(6, name="gaussian_params")(hidden)
@@ -145,12 +156,12 @@ def build_model(hp):
     return model
 
 # Perform hyperparameter tuning
-tuner = kt.Hyperband(
+tuner = kt.RandomSearch(
     build_model,
     objective="val_loss",
-    max_epochs=200,
-    factor=2,
-    directory="hyperband_results",
+    max_trials=5000,  # Define the number of trials
+    executions_per_trial=1,  # Number of times to train each model with different weight initializations
+    directory="random_search_results",
     project_name="dg_hyperparameter_search"
 )
 
@@ -179,8 +190,8 @@ history = best_model.fit(
 
 # Save best model
 os.makedirs("models", exist_ok=True)
-best_model.save(os.path.join("models", "dg_hps_trained_model.h5"))
+best_model.save(os.path.join("models", "2dg_hps_trained_model.h5"))
 
 # Save best training history
-with open(os.path.join(data_dir, "dg_hps_training_history.pkl"), "wb") as f:
+with open(os.path.join(data_dir, "2dg_hps_training_history.pkl"), "wb") as f:
     pickle.dump(history.history, f)
