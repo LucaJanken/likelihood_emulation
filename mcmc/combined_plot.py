@@ -321,13 +321,13 @@ if __name__ == "__main__":
     # ---------------------------
     initial_point = [2.160747, 0.1159404]
     T = 1.0
-    model_file = os.path.join("chain_models", "model_3.h5")
-    param_scaler_file = os.path.join("chain_models", "model_3_param_scaler.pkl")
-    target_scaler_file = os.path.join("chain_models", "model_3_target_scaler.pkl")
+    model_file = os.path.join("chain_models", "model_1.h5")
+    param_scaler_file = os.path.join("chain_models", "model_1_param_scaler.pkl")
+    target_scaler_file = os.path.join("chain_models", "model_1_target_scaler.pkl")
     sigma = [7.031435e-03, 2.450273e-04]
     sampler = MCMC2D(initial_point, T, model_file, param_scaler_file, target_scaler_file, sigma=sigma)
     
-    sampler.chain(n_steps=24000, burn_in=1000, adaptation_interval=10, target_acceptance=0.23)
+    sampler.chain(n_steps=4*24000, burn_in=1000, adaptation_interval=10, target_acceptance=0.23)
     mcmc_data = np.array(sampler.positions)
     bestfit = sampler.initial_point
 
