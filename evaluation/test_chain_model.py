@@ -68,7 +68,7 @@ class ScaledPredictionLayer(tf.keras.layers.Layer):
 # -------------------------------
 # Model & Scaler Paths
 # -------------------------------
-model_path = os.path.join("chain_models", "chain_trained_model.h5")
+model_path = os.path.join("models", "chain_trained_model.h5")
 
 # Load saved scalers (these were stored during training)
 with open(os.path.join("data", "chain_param_scaler.pkl"), "rb") as f:
